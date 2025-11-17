@@ -1,0 +1,253 @@
+// App.js — Secure "AI Vault" Version
+
+import React, { useState } from "react";
+import { View, Text, Pressable, FlatList, ActivityIndicator, Alert, Linking, ScrollView } from "react-native";
+import { StatusBar } from "expo-status-bar";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { XMLParser } from "fast-xml-parser";
+
+// ===== NEW: Import Firebase Tools =====
+import { initializeApp } from "firebase/app";
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+// ===== NEW: Initialize Your Firebase "Vault" =====
+// This is the complete, correct "secret handshake"
+const firebaseConfig = {
+  apiKey: "AIzaSyAC1I9TQ5hGqsPqsOQRdbkRAZYPh_DzO1A",
+  authDomain: "chatmend-29f9a.firebaseapp.com",
+  projectId: "chatmend-29f9a",
+  storageBucket: "chatmend-29f9a.appspot.com",
+  messagingSenderId: "632600753263",
+  appId: "1:632600753263:web:715a305f6c8f4211a76678" // Using the ID from my previous instructions
+};
+
+// Connect our app to the vault
+const app = initializeApp(firebaseConfig);
+const functions = getFunctions(app);
+
+// Get a *reference* to the "analyzeText" vault function we built
+const secureAnalyzeFunction = httpsCallable(functions, "analyzeText");
+
+// ===== THEME (dark) - Unchanged =====
+const C = {
+  background: "hsl(222, 47%, 11%)",
+  foreground: "hsl(210, 40%, 98%)",
+  card: "hsl(222, 47%, 11%)",
+  border: "hsl(217, 33%, 17%)",
+  primary: "hsl(243, 75%, 59%)",
+  primaryFg: "hsl(0, 0%, 100%)",
+  accent: "hsl(217, 33%, 80%)"
+};
+
+const Card = ({ children, style }) => (
+  <View style={[{ borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12, marginVertical: 8, backgroundColor: C.card }, style]}>
+    {children}
+  </View>
+);
+
+const Button = ({ title, onPress, disabled }) => (
+  <Pressable
+    onPress={onPress}
+    disabled={disabled}
+    style={{
+      opacity: disabled ? 0.5 : 1,
+      backgroundColor: C.primary,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      marginVertical: 6,
+    }}
+  >
+    <Text style={{ color: C.primaryFg, fontSize: 16, textAlign: "center" }}>{title}</Text>
+  </Pressable>
+);
+
+// ===== XML helpers - Unchanged =====
+function parseSmsBackupXml(xmlString) {
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", trimValues: true });
+  const root = parser.parse(xmlString);
+  const smses = root?.smses?.sms;
+  if (!smses) return [];
+  const rows = Array.isArray(smses) ? smses : [smses];
+
+  const map = new Map();
+  for (const row of rows) {
+    const name = row.contact_name && row.contact_name !== "(Unknown)" ? row.contact_name : null;
+    const key = name || row.address || "Unknown";
+    const body = row.body ?? "";
+    const who = row.type === "2" ? "You" : (name || row.address || "Unknown");
+    const time = Number(row.date) ? new Date(Number(row.date)).toISOString() : String(row.date || "");
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ who, text: body, time });
+  }
+
+  const threads = [];
+  for (const [key, messages] of map.entries()) {
+    messages.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    threads.push({ id: key, name: key, count: messages.length, messages });
+  }
+  threads.sort((a, b) => b.count - a.count);
+  return threads;
+}
+
+function toTranscript(messages, maxChars = 20000) {
+  const lines = messages.map(m => `[${m.time}] ${m.who}: ${m.text}`);
+  let joined = lines.join("\n");
+  if (joined.length > maxChars) {
+    joined = joined.slice(joined.length - maxChars);
+    joined = "…(earlier messages truncated)…\n" + joined;
+  }
+  return joined;
+}
+
+// ===== GPT call - REWIRED =====
+async function analyzeWithGPT(threadName, transcript) {
+  
+  console.log("Calling secure AI vault...");
+
+  const response = await secureAnalyzeFunction({
+    threadName: threadName,
+    transcript: transcript
+  });
+  
+  const analysis = response.data;
+  if (!analysis) {
+    throw new Error("The AI vault returned an empty response.");
+  }
+  
+  console.log("Got analysis from vault.");
+  return analysis;
+}
+
+// ===== Main App - Unchanged =====
+export default function App() {
+  const [xmlFileName, setXmlFileName] = useState(null);
+  const [threads, setThreads] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function openSmsBackupApp() {
+    const url = "market://details?id=com.riteshsahu.SMSBackupRestore";
+    const web = "https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore";
+    Linking.openURL(url).catch(() => Linking.openURL(web));
+  }
+
+  async function pickXml() {
+    setResult(null); setSelected(null); setThreads([]);
+    const res = await DocumentPicker.getDocumentAsync({
+      type: ["application/xml", "text/xml", "text/plain", "*/*"], multiple: false, copyToCacheDirectory: true
+    });
+    if (res.canceled) return;
+    const file = res.assets?.[0]; if (!file) return;
+
+    const contents = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.UTF8 });
+    const parsed = parseSmsBackupXml(contents);
+    if (parsed.length === 0) { Alert.alert("No messages", "That XML didn’t look like an SMS export."); return; }
+
+    setXmlFileName(file.name || file.uri.split("/").pop());
+    setThreads(parsed);
+    await AsyncStorage.setItem("@last_xml_uri", file.uri);
+  }
+
+  async function analyzeSelected() {
+    if (!selected) return;
+    setLoading(true); setResult(null);
+    try {
+      const transcript = toTranscript(selected.messages);
+      const analysis = await analyzeWithGPT(selected.name, transcript); 
+      setResult(analysis);
+    } catch (e) {
+      Alert.alert("Analysis failed", String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: C.background, padding: 16 }}>
+      <StatusBar style="light" />
+      <Text style={{ color: C.foreground, fontSize: 20, fontWeight: "700", marginBottom: 8 }}>
+        ChatMend — Import & Analyze
+      </Text>
+      <Text style={{ color: C.accent, marginBottom: 12 }}>
+        Flow: Backup SMS → Import XML → Choose conversation → Analyze.
+      </Text>
+
+      <Card>
+        <Text style={{ color: C.foreground, marginBottom: 6 }}>Don’t have an export yet?</Text>
+        <Button title="Get SMS Backup & Restore" onPress={openSmsBackupApp} />
+        <Text style={{ color: C.accent, marginTop: 6 }}>
+          In that app: Backup → Messages → “Back up now” → save the XML, then return here and import it.
+        </Text>
+      </Card>
+
+      <Card>
+        <Text style={{ color: C.foreground, marginBottom: 6 }}>Step 1 — Import XML</Text>
+        <Button title="Import XML" onPress={pickXml} />
+        <Text style={{ color: C.accent, marginTop: 6 }}>File: {xmlFileName ?? "none"}</Text>
+      </Card>
+
+      {threads.length > 0 && (
+        <Card>
+          <Text style={{ color: C.foreground, marginBottom: 6 }}>Step 2 — Pick a conversation</Text>
+          <FlatList
+            data={threads}
+            keyExtractor={(t) => t.id}
+            style={{ maxHeight: 280, borderRadius: 8, borderWidth: 1, borderColor: C.border }}
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => setSelected(item)}
+                style={{
+                  paddingVertical: 10, paddingHorizontal: 12,
+                  borderBottomWidth: 1, borderBottomColor: C.border,
+                  backgroundColor: selected?.id === item.id ? "rgba(255,255,255,0.05)" : "transparent",
+                }}
+              >
+                <Text style={{ color: C.foreground, fontSize: 16 }}>{item.name}</Text>
+                <Text style={{ color: C.accent, fontSize: 12 }}>{item.count} messages</Text>
+              </Pressable>
+            )}
+          />
+          <Button title="Analyze selected conversation" onPress={analyzeSelected} disabled={!selected || loading} />
+          {loading && <ActivityIndicator color={C.primary} style={{ marginTop: 8 }} />}
+        </Card>
+      )}
+
+      {result && (
+        <Card>
+          <Text style={{ color: C.primary, fontSize: 16, fontWeight: "700", marginBottom: 6 }}>Analysis</Text>
+
+          <Text style={{ color: C.accent, marginBottom: 4 }}>Traits Summary</Text>
+          <Text style={{ color: C.foreground, marginBottom: 8 }}>{result.traits_summary ?? "—"}</Text>
+
+          <Text style={{ color: C.accent, marginBottom: 4 }}>Attachment Styles</Text>
+          {(result.attachment_styles ?? []).map((a, i) => (
+            <Text key={i} style={{ color: C.foreground, marginBottom: 4 }}>
+              • {a.person}: {a.style} — {a.evidence}
+            </Text>
+          ))}
+
+          <Text style={{ color: C.accent, marginTop: 8, marginBottom: 4 }}>Strengths</Text>
+          {(result.strengths ?? []).map((s, i) => (
+            <Text key={i} style={{ color: C.foreground }}>• {s}</Text>
+          ))}
+
+          <Text style={{ color: C.accent, marginTop: 8, marginBottom: 4 }}>Risks</Text>
+          {(result.risks ?? []).map((r, i) => (
+            <Text key={i} style={{ color: C.foreground }}>• {r}</Text>
+          ))}
+
+          <Text style={{ color: C.accent, marginTop: 8, marginBottom: 4 }}>Recommended Actions</Text>
+          {(result.recommended_actions ?? []).map((r, i) => (
+            <Text key={i} style={{ color: C.foreground }}>• {r}</Text>
+          ))}
+        </Card>
+      )}
+
+      <View style={{ height: 40 }} />
+    </ScrollView>
+  );
+}
