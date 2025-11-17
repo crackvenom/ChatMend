@@ -1,29 +1,11 @@
 {
   "expo": {
-    "name": "ChatMendClean",
-    "slug": "ChatMendClean",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
-    },
+    "name": "ChatMend",
+    "slug": "ChatMend",
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true
+      "package": "com.cvhawkes.ChatMend",
+      "permissions": ["READ_SMS", "READ_CONTACTS"]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "sdkVersion": "54.0.0"
   }
 }
