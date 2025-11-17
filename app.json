@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "ChatMend",
+    "slug": "ChatMend",
+    "android": {
+      "package": "com.cvhawkes.ChatMend",
+      "permissions": ["READ_SMS", "READ_CONTACTS"]
+    },
+    "sdkVersion": "54.0.0"
+  }
+}
